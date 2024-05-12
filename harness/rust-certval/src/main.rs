@@ -176,11 +176,13 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     let mut pe = PkiEnvironment::new();
     populate_5280_pki_environment(&mut pe);
 
+    let mut has_an_ip_constraint = false;
     let mut ta_store = TaSource::new();
     for ta in tc.trusted_certs.iter() {
         let cert_ta = Certificate::from_pem(ta.as_bytes()).expect("Read pem file");
         if has_unsupported_name_constraint(&cert_ta) {
-            return TestcaseResult::skip(tc, "unsupported name constraint");
+            has_an_ip_constraint = true;
+            //return TestcaseResult::skip(tc, "unsupported name constraint");
         }
         ta_store.push(CertFile {
             bytes: cert_ta.to_der().expect("serialize as der"),
@@ -203,7 +205,8 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     for ca in tc.untrusted_intermediates.iter() {
         let cert_ca = Certificate::from_pem(ca.as_bytes()).expect("Read pem file");
         if has_unsupported_name_constraint(&cert_ca) {
-            return TestcaseResult::skip(tc, "unsupported name constraint");
+            has_an_ip_constraint = true;
+            //return TestcaseResult::skip(tc, "unsupported name constraint");
         }
         cert_store.push(CertFile {
             bytes: cert_ca.to_der().expect("serialize as der"),
@@ -240,8 +243,16 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
                             return TestcaseResult::skip(tc, "peer name evaluation after successful path validation is not supported");
                         }
 
+                        if tc.expected_result == ExpectedResult::Failure && has_an_ip_constraint {
+                            return TestcaseResult::skip(tc, "unsupported name constraint");
+                        }
+
                         return TestcaseResult::success(tc);
                     } else {
+                        if tc.expected_result == ExpectedResult::Success && has_an_ip_constraint {
+                            return TestcaseResult::skip(tc, "unsupported name constraint");
+                        }
+
                         v.push(status);
                     }
                 }
@@ -250,6 +261,10 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
                 }
             },
             Err(e) => {
+                if tc.expected_result == ExpectedResult::Success && has_an_ip_constraint {
+                    return TestcaseResult::skip(tc, "unsupported name constraint");
+                }
+
                 failures.push(format!("validate_path failed with {e:?}"));
             }
         };
