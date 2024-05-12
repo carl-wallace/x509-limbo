@@ -1,15 +1,21 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-use certval::{populate_5280_pki_environment, CertFile, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, CertSource, get_time_of_interest, get_validation_status};
 use certval::CertificationPathResultsTypes::PathValidationStatus;
+use certval::{
+    get_time_of_interest, get_validation_status, populate_5280_pki_environment,
+    set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath,
+    CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource,
+};
 use chrono::{DateTime, Utc};
 use limbo_harness_support::{
     load_limbo,
     models::{Feature, LimboResult, PeerKind, Testcase, TestcaseResult, ValidationKind},
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 use x509_cert::{
+    certificate::{CertificateInner, Raw},
     der::{DecodePem, Encode},
-    Certificate,
 };
+
+type Certificate = CertificateInner<Raw>;
 
 fn main() {
     let limbo = load_limbo();
@@ -34,7 +40,7 @@ fn main() {
 //}
 
 fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
-    let cps = CertificationPathSettings::new();
+    let mut cps = CertificationPathSettings::new();
 
     if tc.features.contains(&Feature::MaxChainDepth) {
         return TestcaseResult::skip(
@@ -55,10 +61,12 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
         return TestcaseResult::skip(tc, "key_usage not supported yet");
     }
 
-    let mut leaf = PDVCertificate::try_from(
-        Certificate::from_pem(tc.peer_certificate.as_bytes()).expect("parse leaf pem"),
-    )
-    .unwrap();
+    let cert = if let Ok(cert) = Certificate::from_pem(tc.peer_certificate.as_bytes()) {
+        cert
+    } else {
+        return TestcaseResult::fail(tc, "unable to parse cert");
+    };
+    let mut leaf = PDVCertificate::try_from(cert).unwrap();
 
     let mut cpr = CertificationPathResults::new();
     let mut pe = PkiEnvironment::new();
@@ -88,8 +96,12 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
     let time_of_interest = match tc.validation_time {
         Some(toi) => toi.timestamp() as u64,
-        None => SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
     };
+    set_time_of_interest(&mut cps, time_of_interest);
     //let validation_time = webpki::types::UnixTime::since_unix_epoch(
     //    (tc.validation_time.unwrap_or(Utc::now().into()) - DateTime::UNIX_EPOCH)
     //        .to_std()
@@ -98,34 +110,31 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
     let mut paths: Vec<CertificationPath> = vec![];
     pe.add_certificate_source(Box::new(cert_store.clone()));
-    let r = pe.get_paths_for_target(&pe, &leaf, &mut paths, 0, time_of_interest).unwrap();
-
+    let r = pe
+        .get_paths_for_target(&pe, &leaf, &mut paths, 0, time_of_interest)
+        .unwrap();
 
     let mut v = vec![];
     for path in &mut paths {
         let r = match pe.validate_path(&pe, &cps, path, &mut cpr) {
-            Ok(()) => {
-                match get_validation_status(&cpr) {
-                    Some(status) => {
-                        if certval::PathValidationStatus::Valid == status {
-                            return TestcaseResult::success(tc)
-                        }
-                        else {
-                            v.push(status);
-                        }
-                    }
-                    None => {
-                        return TestcaseResult::fail(tc, "no status value returned");
+            Ok(()) => match get_validation_status(&cpr) {
+                Some(status) => {
+                    if certval::PathValidationStatus::Valid == status {
+                        return TestcaseResult::success(tc);
+                    } else {
+                        v.push(status);
                     }
                 }
-            }
+                None => {
+                    return TestcaseResult::fail(tc, "no status value returned");
+                }
+            },
             Err(e) => {
                 return TestcaseResult::fail(tc, &format!("validate_path failed with {e:?}"));
             }
         };
     }
     TestcaseResult::fail(tc, &format!("{:?}", v))
-
 
     //let Ok(trust_anchors) = trust_anchor_ders
     //    .iter()
