@@ -1,5 +1,5 @@
 use certval::CertificationPathResultsTypes::PathValidationStatus;
-use certval::{get_time_of_interest, get_validation_status, populate_5280_pki_environment, set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, set_extended_key_usage};
+use certval::{get_time_of_interest, get_validation_status, populate_5280_pki_environment, set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, set_extended_key_usage, set_enforce_trust_anchor_constraints, enforce_trust_anchor_constraints};
 use chrono::{DateTime, Utc};
 use limbo_harness_support::{
     load_limbo,
@@ -97,6 +97,8 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
         set_extended_key_usage(&mut cps, ekus);
     }
 
+    set_enforce_trust_anchor_constraints(&mut cps, true);
+
     let cert = if let Ok(cert) = Certificate::from_pem(tc.peer_certificate.as_bytes()) {
         cert
     } else {
@@ -152,7 +154,9 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
     let mut v = vec![];
     for path in &mut paths {
-        let r = match pe.validate_path(&pe, &cps, path, &mut cpr) {
+        let mod_cps = enforce_trust_anchor_constraints(&mut cps, &path.trust_anchor).unwrap();
+
+        let r = match pe.validate_path(&pe, &mod_cps, path, &mut cpr) {
             Ok(()) => match get_validation_status(&cpr) {
                 Some(status) => {
                     if certval::PathValidationStatus::Valid == status {
