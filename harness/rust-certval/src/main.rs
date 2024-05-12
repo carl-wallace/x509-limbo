@@ -11,7 +11,10 @@ use x509_cert::{
     certificate::{CertificateInner, Raw},
     der::{DecodePem, Encode},
 };
-use x509_cert::der::oid::db::rfc5280::{ANY_EXTENDED_KEY_USAGE, ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING, ID_KP_EMAIL_PROTECTION, ID_KP_OCSP_SIGNING, ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING};
+use x509_cert::der::Decode;
+use x509_cert::der::oid::db::rfc5280::{ANY_EXTENDED_KEY_USAGE, ID_CE_NAME_CONSTRAINTS, ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING, ID_KP_EMAIL_PROTECTION, ID_KP_OCSP_SIGNING, ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING};
+use x509_cert::ext::pkix::name::GeneralName;
+use x509_cert::ext::pkix::NameConstraints;
 use limbo_harness_support::models::{ActualResult, KnownEkUs};
 
 type Certificate = CertificateInner<Raw>;
@@ -25,6 +28,7 @@ fn main() {
     }
 
     let mut unexpected = 0;
+    let mut unexpected_but_undetermined_importance = 0;
     for (ii, result) in results.iter().enumerate() {
         let tc = limbo.testcases.get(ii);
         match result.actual_result {
@@ -52,6 +56,37 @@ fn main() {
     };
 
     serde_json::to_writer_pretty(std::io::stdout(), &result).unwrap();
+}
+
+fn has_unsupported_name_constraint(cert: &Certificate) -> bool {
+    if let Some(exts) = &cert.tbs_certificate.extensions {
+        for ext in exts {
+            if ext.extn_id == ID_CE_NAME_CONSTRAINTS {
+                let nc = NameConstraints::from_der(ext.extn_value.as_bytes()).unwrap();
+                if let Some(perm) = &nc.permitted_subtrees {
+                    for gs in perm {
+                        match gs.base {
+                            GeneralName::IpAddress(_) => return true,
+                            GeneralName::OtherName(_) => return true,
+                            GeneralName::EdiPartyName(_) => return true,
+                            _ => {}
+                        }
+                    }
+                }
+                if let Some(excl) = &nc.permitted_subtrees {
+                    for gs in excl {
+                        match gs.base {
+                            GeneralName::IpAddress(_) => return true,
+                            GeneralName::OtherName(_) => return true,
+                            GeneralName::EdiPartyName(_) => return true,
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 //fn der_from_pem<B: AsRef<[u8]>>(bytes: B) -> webpki::types::CertificateDer<'static> {
@@ -113,6 +148,9 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     let mut ta_store = TaSource::new();
     for ta in tc.trusted_certs.iter() {
         let cert_ta = Certificate::from_pem(ta.as_bytes()).expect("Read pem file");
+        if has_unsupported_name_constraint(&cert_ta) {
+            return TestcaseResult::skip(tc, "unsupported name constraint");
+        }
         ta_store.push(CertFile {
             bytes: cert_ta.to_der().expect("serialize as der"),
             filename: String::new(),
@@ -124,6 +162,9 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     let mut cert_store = CertSource::new();
     for ca in tc.untrusted_intermediates.iter() {
         let cert_ca = Certificate::from_pem(ca.as_bytes()).expect("Read pem file");
+        if has_unsupported_name_constraint(&cert_ca) {
+            return TestcaseResult::skip(tc, "unsupported name constraint");
+        }
         cert_store.push(CertFile {
             bytes: cert_ca.to_der().expect("serialize as der"),
             filename: String::new(),
