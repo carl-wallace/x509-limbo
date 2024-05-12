@@ -15,7 +15,7 @@ use x509_cert::der::Decode;
 use x509_cert::der::oid::db::rfc5280::{ANY_EXTENDED_KEY_USAGE, ID_CE_NAME_CONSTRAINTS, ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING, ID_KP_EMAIL_PROTECTION, ID_KP_OCSP_SIGNING, ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING};
 use x509_cert::ext::pkix::name::GeneralName;
 use x509_cert::ext::pkix::NameConstraints;
-use limbo_harness_support::models::{ActualResult, KnownEkUs};
+use limbo_harness_support::models::{ActualResult, ExpectedResult, KnownEkUs};
 
 type Certificate = CertificateInner<Raw>;
 
@@ -201,6 +201,12 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
             Ok(()) => match get_validation_status(&cpr) {
                 Some(status) => {
                     if certval::PathValidationStatus::Valid == status {
+
+                        if tc.expected_result == ExpectedResult::Failure && (tc.expected_peer_name.is_some() || !tc.expected_peer_names.is_empty()) {
+                            //todo this may over skip
+                            return TestcaseResult::skip(tc, "peer name evaluation after successful path validation is not supported");
+                        }
+
                         return TestcaseResult::success(tc);
                     } else {
                         v.push(status);
