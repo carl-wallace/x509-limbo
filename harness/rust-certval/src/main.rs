@@ -1,7 +1,6 @@
-use certval::{
-    populate_5280_pki_environment, CertFile, CertVector, CertificationPath,
-    CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource,
-};
+use std::time::{SystemTime, UNIX_EPOCH};
+use certval::{populate_5280_pki_environment, CertFile, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, CertSource, get_time_of_interest, get_validation_status};
+use certval::CertificationPathResultsTypes::PathValidationStatus;
 use chrono::{DateTime, Utc};
 use limbo_harness_support::{
     load_limbo,
@@ -35,6 +34,8 @@ fn main() {
 //}
 
 fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
+    let cps = CertificationPathSettings::new();
+
     if tc.features.contains(&Feature::MaxChainDepth) {
         return TestcaseResult::skip(
             tc,
@@ -59,35 +60,72 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     )
     .unwrap();
 
-    let mut trust_anchor = TaSource::new();
+    let mut cpr = CertificationPathResults::new();
+    let mut pe = PkiEnvironment::new();
+    populate_5280_pki_environment(&mut pe);
+
+    let mut ta_store = TaSource::new();
     for ta in tc.trusted_certs.iter() {
         let cert_ta = Certificate::from_pem(ta.as_bytes()).expect("Read pem file");
-        trust_anchor.push(CertFile {
+        ta_store.push(CertFile {
             bytes: cert_ta.to_der().expect("serialize as der"),
             filename: String::new(),
         });
     }
-    trust_anchor.initialize().unwrap();
+    ta_store.initialize().unwrap();
+    pe.add_trust_anchor_source(Box::new(ta_store.clone()));
 
-    let intermediates = tc
-        .untrusted_intermediates
-        .iter()
-        .map(|ic| {
-            PDVCertificate::try_from(Certificate::from_pem(ic.as_bytes()).expect("Read pem"))
-                .expect("read untrusted cert")
-        })
-        .collect::<Vec<_>>();
+    let mut cert_store = CertSource::new();
+    for ca in tc.untrusted_intermediates.iter() {
+        let cert_ca = Certificate::from_pem(ca.as_bytes()).expect("Read pem file");
+        cert_store.push(CertFile {
+            bytes: cert_ca.to_der().expect("serialize as der"),
+            filename: String::new(),
+        });
+    }
+    cert_store.initialize(&cps).unwrap();
+    cert_store.find_all_partial_paths(&pe, &cps);
 
-    let mut pe = PkiEnvironment::new();
-    populate_5280_pki_environment(&mut pe);
-    pe.add_trust_anchor_source(Box::new(trust_anchor.clone()));
+    let time_of_interest = match tc.validation_time {
+        Some(toi) => toi.timestamp() as u64,
+        None => SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+    };
+    //let validation_time = webpki::types::UnixTime::since_unix_epoch(
+    //    (tc.validation_time.unwrap_or(Utc::now().into()) - DateTime::UNIX_EPOCH)
+    //        .to_std()
+    //        .expect("invalid validation time!"),
+    //);
 
-    let mut cert_path = CertificationPath::new(trust_anchor, intermediates, leaf);
+    let mut paths: Vec<CertificationPath> = vec![];
+    pe.add_certificate_source(Box::new(cert_store.clone()));
+    let r = pe.get_paths_for_target(&pe, &leaf, &mut paths, 0, time_of_interest).unwrap();
 
-    let cps = CertificationPathSettings::new();
-    let mut cpr = CertificationPathResults::new();
 
-    let r = pe.validate_path(&pe, &cps, &mut cert_path, &mut cpr);
+    let mut v = vec![];
+    for path in &mut paths {
+        let r = match pe.validate_path(&pe, &cps, path, &mut cpr) {
+            Ok(()) => {
+                match get_validation_status(&cpr) {
+                    Some(status) => {
+                        if certval::PathValidationStatus::Valid == status {
+                            return TestcaseResult::success(tc)
+                        }
+                        else {
+                            v.push(status);
+                        }
+                    }
+                    None => {
+                        return TestcaseResult::fail(tc, "no status value returned");
+                    }
+                }
+            }
+            Err(e) => {
+                return TestcaseResult::fail(tc, &format!("validate_path failed with {e:?}"));
+            }
+        };
+    }
+    TestcaseResult::fail(tc, &format!("{:?}", v))
+
 
     //let Ok(trust_anchors) = trust_anchor_ders
     //    .iter()
@@ -146,5 +184,5 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     //} else {
     //    TestcaseResult::success(tc)
     //}
-    TestcaseResult::fail(tc, "wip")
+    //TestcaseResult::fail(tc, "wip")
 }
