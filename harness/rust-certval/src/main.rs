@@ -73,7 +73,7 @@ fn has_unsupported_name_constraint(cert: &Certificate) -> bool {
                         }
                     }
                 }
-                if let Some(excl) = &nc.permitted_subtrees {
+                if let Some(excl) = &nc.excluded_subtrees {
                     for gs in excl {
                         match gs.base {
                             GeneralName::IpAddress(_) => return true,
