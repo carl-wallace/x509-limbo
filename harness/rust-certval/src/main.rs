@@ -14,7 +14,6 @@ use limbo_harness_support::{
         PeerName, Testcase, TestcaseResult,
     },
 };
-
 use x509_cert::{
     certificate::{CertificateInner, Raw},
     der::{
@@ -142,7 +141,7 @@ fn main() {
             ActualResult::Success => {
                 successful += 1;
                 if tc.expected_result != ExpectedResult::Success && !expected_failure(&tc) {
-                    println!(
+                    eprintln!(
                         "Did not get expected result for test case # {ii} - {:?}",
                         tc.id
                     );
@@ -152,7 +151,7 @@ fn main() {
             ActualResult::Failure => {
                 failed += 1;
                 if tc.expected_result != ExpectedResult::Failure {
-                    println!(
+                    eprintln!(
                         "Did not get expected result for test case # {ii} - {:?}",
                         tc.id
                     );
@@ -170,32 +169,32 @@ fn main() {
             }
         }
     }
-    println!("Found {unexpected} test cases where expected results were not produced.");
-    println!("Ran {} test cases.", results.len());
-    println!("- {successful} succeeded as expected.");
-    println!("- {failed} failed as expected.");
-    println!("- {skipped} were skipped due to missing support.");
-    println!("- {} were skipped as linter checks.", LINTER_TESTS.len());
-    println!(
+    eprintln!("Found {unexpected} test cases where expected results were not produced.");
+    eprintln!("Ran {} test cases.", results.len());
+    eprintln!("- {successful} succeeded as expected.");
+    eprintln!("- {failed} failed as expected.");
+    eprintln!("- {skipped} were skipped due to missing support.");
+    eprintln!("- {} were skipped as linter checks.", LINTER_TESTS.len());
+    eprintln!(
         "- {} were skipped until weak key detection is added.",
         WEAK_KEY_CHECKS.len()
     );
-    println!("- {} were skipped as a bug to be fixed.", BUG.len());
-    println!(
+    eprintln!("- {} were skipped as a bug to be fixed.", BUG.len());
+    eprintln!(
         "- {} were skipped as pathological cases that need attention.",
         PATHOLOGICAL_CHECKS.len()
     );
-    println!(
+    eprintln!(
         "- {} were skipped as unsupported application-level checks.",
         UNSUPPORTED_APPLICATION_CHECK.len()
     );
-    println!(
+    eprintln!(
         "- {} were skipped as a broken test case (need to pull the fix).",
         BUSTED_TEST_CASES.len()
     );
 
     for k in skipped_rationales.keys() {
-        println!("{k}: {:?}", skipped_rationales.get(k));
+        eprintln!("{k}: {:?}", skipped_rationales.get(k));
     }
 
     let result = LimboResult {
