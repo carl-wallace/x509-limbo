@@ -89,7 +89,7 @@ test-openssl:
 .PHONY: test-rust-certval
 test-rust-certval:
 	@cargo build --bin rust-certval-harness
-	$(MAKE) run ARGS="harness ./target/debug/rust-certval-harness --output ./results/rust-webpki.json"
+	$(MAKE) run ARGS="harness ./target/debug/rust-certval-harness --output ./results/rust-certval.json --exclude 'bettertls*'"
 
 .PHONY: test-rust-webpki
 test-rust-webpki:
