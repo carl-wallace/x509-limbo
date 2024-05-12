@@ -159,6 +159,15 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     ta_store.initialize().unwrap();
     pe.add_trust_anchor_source(Box::new(ta_store.clone()));
 
+    let time_of_interest = match tc.validation_time {
+        Some(toi) => toi.timestamp() as u64,
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    };
+    set_time_of_interest(&mut cps, time_of_interest);
+
     let mut cert_store = CertSource::new();
     for ca in tc.untrusted_intermediates.iter() {
         let cert_ca = Certificate::from_pem(ca.as_bytes()).expect("Read pem file");
@@ -173,14 +182,6 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     cert_store.initialize(&cps).unwrap();
     cert_store.find_all_partial_paths(&pe, &cps);
 
-    let time_of_interest = match tc.validation_time {
-        Some(toi) => toi.timestamp() as u64,
-        None => SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    };
-    set_time_of_interest(&mut cps, time_of_interest);
     //let validation_time = webpki::types::UnixTime::since_unix_epoch(
     //    (tc.validation_time.unwrap_or(Utc::now().into()) - DateTime::UNIX_EPOCH)
     //        .to_std()
