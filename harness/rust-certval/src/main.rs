@@ -123,10 +123,6 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
         set_initial_path_length_constraint(&mut cps, d);
     }
 
-    if !matches!(tc.validation_kind, ValidationKind::Server) {
-        return TestcaseResult::skip(tc, "non-SERVER testcases not supported yet");
-    }
-
     if !tc.signature_algorithms.is_empty() {
         return TestcaseResult::skip(tc, "signature_algorithms not supported yet");
     }
