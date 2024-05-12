@@ -1,5 +1,6 @@
+use std::collections::BTreeMap;
 use certval::CertificationPathResultsTypes::PathValidationStatus;
-use certval::{get_time_of_interest, get_validation_status, populate_5280_pki_environment, set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, set_extended_key_usage, set_enforce_trust_anchor_constraints, enforce_trust_anchor_constraints};
+use certval::{get_time_of_interest, get_validation_status, populate_5280_pki_environment, set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, set_extended_key_usage, set_enforce_trust_anchor_constraints, enforce_trust_anchor_constraints, set_initial_path_length_constraint};
 use chrono::{DateTime, Utc};
 use limbo_harness_support::{
     load_limbo,
@@ -27,27 +28,47 @@ fn main() {
         results.push(evaluate_testcase(testcase));
     }
 
+    let mut skipped_rationales : BTreeMap<String, i32> = BTreeMap::new();
+    let mut successful = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
     let mut unexpected = 0;
     let mut unexpected_but_undetermined_importance = 0;
     for (ii, result) in results.iter().enumerate() {
         let tc = limbo.testcases.get(ii);
         match result.actual_result {
             ActualResult::Success => {
+                successful += 1;
                 if tc.unwrap().expected_result.to_string() != "SUCCESS" {
                     println!("Did not get expected result for test case # {ii} - {:?}", tc.unwrap().id);
                     unexpected += 1;
                 }
             }
             ActualResult::Failure => {
+                failed += 1;
                 if tc.unwrap().expected_result.to_string() != "FAILURE" {
                     println!("Did not get expected result for test case # {ii} - {:?}", tc.unwrap().id);
                     unexpected += 1;
                 }
             }
-            _ => {}
+            ActualResult::Skipped => {
+                skipped += 1;
+                let context = result.context.clone().unwrap();
+                if !skipped_rationales.contains_key(&context) {
+                    skipped_rationales.insert(context,  1);
+                }
+                else {
+                    *skipped_rationales.get_mut(&context).unwrap() += 1;
+                }
+            }
         }
     }
     println!("Found {unexpected} test cases where expected results were not produced.");
+    println!("Ran {} test cases: {successful} succeeded as expected, {failed} failed as expected, and {skipped} were skipped due to missing support.", results.len());
+
+    for k in skipped_rationales.keys() {
+        println!("{k}: {:?}", skipped_rationales.get(k));
+    }
 
     let result = LimboResult {
         version: 1,
@@ -98,10 +119,8 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     let mut cps = CertificationPathSettings::new();
 
     if tc.features.contains(&Feature::MaxChainDepth) {
-        return TestcaseResult::skip(
-            tc,
-            "max-chain-depth testcases are not supported by this API",
-        );
+        let d = tc.max_chain_depth.unwrap() as u8;
+        set_initial_path_length_constraint(&mut cps, d);
     }
 
     if !matches!(tc.validation_kind, ValidationKind::Server) {
@@ -195,6 +214,7 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
         .unwrap();
 
     let mut v = vec![];
+    let mut failures = vec![];
     for path in &mut paths {
         let mod_cps = enforce_trust_anchor_constraints(&mut cps, &path.trust_anchor).unwrap();
 
@@ -218,11 +238,11 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
                 }
             },
             Err(e) => {
-                return TestcaseResult::fail(tc, &format!("validate_path failed with {e:?}"));
+                failures.push(format!("validate_path failed with {e:?}"));
             }
         };
     }
-    TestcaseResult::fail(tc, &format!("{:?}", v))
+    TestcaseResult::fail(tc, &format!("{:?}: {:?}", v, failures))
 
     //let Ok(trust_anchors) = trust_anchor_ders
     //    .iter()
