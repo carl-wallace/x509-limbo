@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use certval::CertificationPathResultsTypes::PathValidationStatus;
-use certval::{get_time_of_interest, get_validation_status, populate_5280_pki_environment, set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, set_extended_key_usage, set_enforce_trust_anchor_constraints, enforce_trust_anchor_constraints, set_initial_path_length_constraint};
+use certval::{get_time_of_interest, get_validation_status, populate_5280_pki_environment, set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, set_extended_key_usage, set_enforce_trust_anchor_constraints, enforce_trust_anchor_constraints, set_initial_path_length_constraint, set_target_key_usage};
 use chrono::{DateTime, Utc};
 use limbo_harness_support::{
     load_limbo,
@@ -13,10 +13,11 @@ use x509_cert::{
     der::{DecodePem, Encode},
 };
 use x509_cert::der::Decode;
+use x509_cert::der::flagset::FlagSet;
 use x509_cert::der::oid::db::rfc5280::{ANY_EXTENDED_KEY_USAGE, ID_CE_NAME_CONSTRAINTS, ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING, ID_KP_EMAIL_PROTECTION, ID_KP_OCSP_SIGNING, ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING};
 use x509_cert::ext::pkix::name::GeneralName;
-use x509_cert::ext::pkix::NameConstraints;
-use limbo_harness_support::models::{ActualResult, ExpectedResult, KnownEkUs};
+use x509_cert::ext::pkix::{KeyUsages, NameConstraints};
+use limbo_harness_support::models::{ActualResult, ExpectedResult, KeyUsage, KnownEkUs};
 
 type Certificate = CertificateInner<Raw>;
 
@@ -127,8 +128,23 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
         return TestcaseResult::skip(tc, "signature_algorithms not supported yet");
     }
 
+    let mut target_ku : FlagSet<KeyUsages>= Default::default();
     if !tc.key_usage.is_empty() {
-        return TestcaseResult::skip(tc, "key_usage not supported yet");
+        for ku in &tc.key_usage {
+            match ku {
+                KeyUsage::DigitalSignature => {target_ku |= KeyUsages::DigitalSignature}
+                KeyUsage::ContentCommitment => {target_ku |= KeyUsages::NonRepudiation}
+                KeyUsage::KeyEncipherment => {target_ku |= KeyUsages::KeyEncipherment}
+                KeyUsage::DataEncipherment => {target_ku |= KeyUsages::DataEncipherment}
+                KeyUsage::KeyAgreement => {target_ku |= KeyUsages::KeyAgreement}
+                KeyUsage::KeyCertSign => {target_ku |= KeyUsages::KeyCertSign}
+                KeyUsage::CRlSign => {target_ku |= KeyUsages::CRLSign}
+                KeyUsage::EncipherOnly => {target_ku |= KeyUsages::EncipherOnly}
+                KeyUsage::DecipherOnly => {target_ku |= KeyUsages::DecipherOnly}
+            }
+        }
+        set_target_key_usage(&mut cps, target_ku.bits());
+        // return TestcaseResult::skip(tc, "key_usage not supported yet");
     }
 
     if tc.extended_key_usage.len() > 0 {
