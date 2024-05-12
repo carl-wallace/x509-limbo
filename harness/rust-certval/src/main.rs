@@ -1,19 +1,18 @@
 use certval::CertificationPathResultsTypes::PathValidationStatus;
-use certval::{
-    get_time_of_interest, get_validation_status, populate_5280_pki_environment,
-    set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath,
-    CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource,
-};
+use certval::{get_time_of_interest, get_validation_status, populate_5280_pki_environment, set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, set_extended_key_usage};
 use chrono::{DateTime, Utc};
 use limbo_harness_support::{
     load_limbo,
     models::{Feature, LimboResult, PeerKind, Testcase, TestcaseResult, ValidationKind},
 };
 use std::time::{SystemTime, UNIX_EPOCH};
+use certval::PDVExtension::ExtendedKeyUsage;
 use x509_cert::{
     certificate::{CertificateInner, Raw},
     der::{DecodePem, Encode},
 };
+use x509_cert::der::oid::db::rfc5280::{ANY_EXTENDED_KEY_USAGE, ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING, ID_KP_EMAIL_PROTECTION, ID_KP_OCSP_SIGNING, ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING};
+use limbo_harness_support::models::{ActualResult, KnownEkUs};
 
 type Certificate = CertificateInner<Raw>;
 
@@ -21,9 +20,30 @@ fn main() {
     let limbo = load_limbo();
 
     let mut results = vec![];
-    for testcase in limbo.testcases {
-        results.push(evaluate_testcase(&testcase));
+    for testcase in &limbo.testcases {
+        results.push(evaluate_testcase(testcase));
     }
+
+    let mut unexpected = 0;
+    for (ii, result) in results.iter().enumerate() {
+        let tc = limbo.testcases.get(ii);
+        match result.actual_result {
+            ActualResult::Success => {
+                if tc.unwrap().expected_result.to_string() != "SUCCESS" {
+                    println!("Did not get expected result for test case # {ii} - {:?}", tc.unwrap().id);
+                    unexpected += 1;
+                }
+            }
+            ActualResult::Failure => {
+                if tc.unwrap().expected_result.to_string() != "FAILURE" {
+                    println!("Did not get expected result for test case # {ii} - {:?}", tc.unwrap().id);
+                    unexpected += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    println!("Found {unexpected} test cases where expected results were not produced.");
 
     let result = LimboResult {
         version: 1,
@@ -59,6 +79,22 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
     if !tc.key_usage.is_empty() {
         return TestcaseResult::skip(tc, "key_usage not supported yet");
+    }
+
+    if tc.extended_key_usage.len() > 0 {
+        let mut ekus = vec![];
+        for eku in &tc.extended_key_usage {
+            match eku {
+                KnownEkUs::ServerAuth => ekus.push(ID_KP_SERVER_AUTH.to_string()),
+                KnownEkUs::ClientAuth => ekus.push(ID_KP_CLIENT_AUTH.to_string()),
+                KnownEkUs::CodeSigning => ekus.push(ID_KP_CODE_SIGNING.to_string()),
+                KnownEkUs::EmailProtection => ekus.push(ID_KP_EMAIL_PROTECTION.to_string()),
+                KnownEkUs::OcspSigning => ekus.push(ID_KP_OCSP_SIGNING.to_string()),
+                KnownEkUs::TimeStamping => ekus.push(ID_KP_TIME_STAMPING.to_string()),
+                KnownEkUs::AnyExtendedKeyUsage => ekus.push(ANY_EXTENDED_KEY_USAGE.to_string()),
+            }
+        }
+        set_extended_key_usage(&mut cps, ekus);
     }
 
     let cert = if let Ok(cert) = Certificate::from_pem(tc.peer_certificate.as_bytes()) {
