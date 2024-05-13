@@ -31,8 +31,7 @@ use x509_cert::{
 
 use certval::{
     enforce_trust_anchor_constraints, get_validation_status,
-    name_constraints_settings_to_name_constraints_set, populate_5280_pki_environment,
-    CertFile,
+    name_constraints_settings_to_name_constraints_set, populate_5280_pki_environment, CertFile,
     CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings,
     ExtensionProcessing, NameConstraintsSettings, PDVCertificate, PDVExtension, PkiEnvironment,
     TaSource,
