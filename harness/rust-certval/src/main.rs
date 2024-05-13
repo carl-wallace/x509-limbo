@@ -1,25 +1,89 @@
-use std::collections::BTreeMap;
-use certval::CertificationPathResultsTypes::PathValidationStatus;
-use certval::{get_time_of_interest, get_validation_status, populate_5280_pki_environment, set_time_of_interest, CertFile, CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings, PDVCertificate, PkiEnvironment, TaSource, set_extended_key_usage, set_enforce_trust_anchor_constraints, enforce_trust_anchor_constraints, set_initial_path_length_constraint, set_target_key_usage};
-use chrono::{DateTime, Utc};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::Path,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use limbo_harness_support::{
     load_limbo,
-    models::{Feature, LimboResult, PeerKind, Testcase, TestcaseResult, ValidationKind},
+    models::{
+        ActualResult, ExpectedResult, Feature, KeyUsage, KnownEkUs, LimboResult, PeerKind,
+        PeerName, Testcase, TestcaseResult,
+    },
 };
-use std::time::{SystemTime, UNIX_EPOCH};
-use certval::PDVExtension::ExtendedKeyUsage;
+
 use x509_cert::{
     certificate::{CertificateInner, Raw},
-    der::{DecodePem, Encode},
+    der::{
+        flagset::FlagSet,
+        oid::db::rfc5280::{
+            ANY_EXTENDED_KEY_USAGE, ID_CE_NAME_CONSTRAINTS, ID_CE_SUBJECT_ALT_NAME,
+            ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING, ID_KP_EMAIL_PROTECTION, ID_KP_OCSP_SIGNING,
+            ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING,
+        },
+        Decode, DecodePem, Encode,
+    },
+    ext::pkix::{name::GeneralName, KeyUsages, NameConstraints, SubjectAltName},
 };
-use x509_cert::der::Decode;
-use x509_cert::der::flagset::FlagSet;
-use x509_cert::der::oid::db::rfc5280::{ANY_EXTENDED_KEY_USAGE, ID_CE_NAME_CONSTRAINTS, ID_KP_CLIENT_AUTH, ID_KP_CODE_SIGNING, ID_KP_EMAIL_PROTECTION, ID_KP_OCSP_SIGNING, ID_KP_SERVER_AUTH, ID_KP_TIME_STAMPING};
-use x509_cert::ext::pkix::name::GeneralName;
-use x509_cert::ext::pkix::{KeyUsages, NameConstraints};
-use limbo_harness_support::models::{ActualResult, ExpectedResult, KeyUsage, KnownEkUs};
+
+use certval::{
+    enforce_trust_anchor_constraints, get_validation_status,
+    name_constraints_settings_to_name_constraints_set, populate_5280_pki_environment,
+    set_enforce_trust_anchor_constraints, set_extended_key_usage, set_extended_key_usage_path,
+    set_initial_path_length_constraint, set_target_key_usage, set_time_of_interest, CertFile,
+    CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings,
+    ExtensionProcessing, NameConstraintsSettings, PDVCertificate, PDVExtension, PkiEnvironment,
+    TaSource,
+};
 
 type Certificate = CertificateInner<Raw>;
+
+fn expected_failure(tc: &Testcase) -> bool {
+    let linter_tests = vec![
+        "rfc5280::aki::critical-aki",
+        "rfc5280::aki::leaf-missing-aki",
+        "rfc5280::aki::intermediate-missing-aki",
+        "rfc5280::aki::cross-signed-root-missing-aki",
+        "rfc5280::nc::not-allowed-in-ee-noncritical",
+        "rfc5280::nc::not-allowed-in-ee-critical",
+        "rfc5280::pc::ica-noncritical-pc",
+        "rfc5280::san::noncritical-with-empty-subject",
+        "rfc5280::serial::too-long",
+        "rfc5280::serial::zero",
+        "rfc5280::ski::critical-ski",
+        "rfc5280::ski::root-missing-ski",
+        "rfc5280::ski::intermediate-missing-ski",
+        "rfc5280::root-missing-basic-constraints",
+        "rfc5280::root-non-critical-basic-constraints",
+        "rfc5280::root-inconsistent-ca-extensions",
+        "rfc5280::leaf-ku-keycertsign",
+        "rfc5280::duplicate-extensions",
+        "webpki::aki::root-with-aki-missing-keyidentifier",
+        "webpki::aki::root-with-aki-authoritycertissuer",
+        "webpki::aki::root-with-aki-authoritycertserialnumber",
+        "webpki::aki::root-with-aki-all-fields",
+        "webpki::aki::root-with-aki-ski-mismatch",
+        "webpki::eku::ee-anyeku",
+        "webpki::eku::ee-critical-eku",
+        "webpki::eku::ee-without-eku",
+        "webpki::eku::root-has-eku",
+        "webpki::nc::intermediate-permitted-excluded-subtrees-both-null",
+        "webpki::nc::intermediate-permitted-excluded-subtrees-both-empty-sequences",
+        "webpki::san::no-san",
+        "webpki::san::san-critical-with-nonempty-subject",
+        "webpki::malformed-aia",
+        "webpki::forbidden-p192-leaf",
+        "webpki::forbidden-dsa-leaf",
+        "webpki::v1-cert",
+        "webpki::ee-basicconstraints-ca",
+        "webpki::ca-as-leaf",
+    ];
+    if linter_tests.contains(&tc.id.as_str()) {
+        return true;
+    }
+    false
+}
 
 fn main() {
     let limbo = load_limbo();
@@ -29,26 +93,32 @@ fn main() {
         results.push(evaluate_testcase(testcase));
     }
 
-    let mut skipped_rationales : BTreeMap<String, i32> = BTreeMap::new();
+    let mut skipped_rationales: BTreeMap<String, i32> = BTreeMap::new();
     let mut successful = 0;
     let mut failed = 0;
     let mut skipped = 0;
     let mut unexpected = 0;
-    let mut unexpected_but_undetermined_importance = 0;
     for (ii, result) in results.iter().enumerate() {
-        let tc = limbo.testcases.get(ii);
+        let tc = limbo.testcases.get(ii).unwrap();
+
         match result.actual_result {
             ActualResult::Success => {
                 successful += 1;
-                if tc.unwrap().expected_result.to_string() != "SUCCESS" {
-                    println!("Did not get expected result for test case # {ii} - {:?}", tc.unwrap().id);
+                if tc.expected_result != ExpectedResult::Success && !expected_failure(&tc){
+                    println!(
+                        "Did not get expected result for test case # {ii} - {:?}",
+                        tc.id
+                    );
                     unexpected += 1;
                 }
             }
             ActualResult::Failure => {
                 failed += 1;
-                if tc.unwrap().expected_result.to_string() != "FAILURE" {
-                    println!("Did not get expected result for test case # {ii} - {:?}", tc.unwrap().id);
+                if tc.expected_result != ExpectedResult::Failure {
+                    println!(
+                        "Did not get expected result for test case # {ii} - {:?}",
+                        tc.id
+                    );
                     unexpected += 1;
                 }
             }
@@ -56,9 +126,8 @@ fn main() {
                 skipped += 1;
                 let context = result.context.clone().unwrap();
                 if !skipped_rationales.contains_key(&context) {
-                    skipped_rationales.insert(context,  1);
-                }
-                else {
+                    skipped_rationales.insert(context, 1);
+                } else {
                     *skipped_rationales.get_mut(&context).unwrap() += 1;
                 }
             }
@@ -78,6 +147,15 @@ fn main() {
     };
 
     serde_json::to_writer_pretty(std::io::stdout(), &result).unwrap();
+}
+
+fn has_unsupported_san(san: &SubjectAltName) -> bool {
+    for gn in &san.0 {
+        if let GeneralName::IpAddress(_) = gn {
+            return true;
+        }
+    }
+    false
 }
 
 fn has_unsupported_name_constraint(cert: &Certificate) -> bool {
@@ -111,12 +189,58 @@ fn has_unsupported_name_constraint(cert: &Certificate) -> bool {
     false
 }
 
-//fn der_from_pem<B: AsRef<[u8]>>(bytes: B) -> webpki::types::CertificateDer<'static> {
-//    let pem = pem::parse(bytes).expect("cert: PEM parse failed");
-//    webpki::types::CertificateDer::from(pem.contents()).into_owned()
-//}
+fn add_peer_name_to_ncs(pn: &PeerName, ncs: &mut NameConstraintsSettings) {
+    match pn.kind {
+        PeerKind::Rfc822 => {
+            if ncs.rfc822_name.is_some() {
+                ncs.rfc822_name.as_mut().unwrap().push(pn.value.clone());
+            } else {
+                ncs.rfc822_name = Some(vec![pn.value.clone()]);
+            }
+        }
+        PeerKind::Dns => {
+            if ncs.dns_name.is_some() {
+                ncs.dns_name.as_mut().unwrap().push(pn.value.clone());
+            } else {
+                ncs.dns_name = Some(vec![pn.value.clone()]);
+            }
+        }
+        PeerKind::Ip => {}
+    }
+}
+fn convert_peer_names_to_name_constraints_settings(
+    tc: &Testcase,
+) -> Option<NameConstraintsSettings> {
+    if tc.expected_peer_name.is_none() && tc.expected_peer_names.is_empty() {
+        return None;
+    }
+
+    let mut ncs = NameConstraintsSettings {
+        user_principal_name: None,
+        rfc822_name: None,
+        dns_name: None,
+        directory_name: None,
+        uniform_resource_identifier: None,
+        not_supported: None,
+    };
+
+    if let Some(pn) = &tc.expected_peer_name {
+        add_peer_name_to_ncs(pn, &mut ncs);
+    }
+
+    for pn in &tc.expected_peer_names {
+        add_peer_name_to_ncs(pn, &mut ncs);
+    }
+
+    Some(ncs)
+}
 
 fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
+    if !tc.signature_algorithms.is_empty() {
+        return TestcaseResult::skip(tc, "signature_algorithms not supported yet");
+    }
+
+    // Prepare a path settings object using information from the Testcase
     let mut cps = CertificationPathSettings::new();
 
     if tc.features.contains(&Feature::MaxChainDepth) {
@@ -124,27 +248,22 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
         set_initial_path_length_constraint(&mut cps, d);
     }
 
-    if !tc.signature_algorithms.is_empty() {
-        return TestcaseResult::skip(tc, "signature_algorithms not supported yet");
-    }
-
-    let mut target_ku : FlagSet<KeyUsages>= Default::default();
     if !tc.key_usage.is_empty() {
+        let mut target_ku: FlagSet<KeyUsages> = Default::default();
         for ku in &tc.key_usage {
             match ku {
-                KeyUsage::DigitalSignature => {target_ku |= KeyUsages::DigitalSignature}
-                KeyUsage::ContentCommitment => {target_ku |= KeyUsages::NonRepudiation}
-                KeyUsage::KeyEncipherment => {target_ku |= KeyUsages::KeyEncipherment}
-                KeyUsage::DataEncipherment => {target_ku |= KeyUsages::DataEncipherment}
-                KeyUsage::KeyAgreement => {target_ku |= KeyUsages::KeyAgreement}
-                KeyUsage::KeyCertSign => {target_ku |= KeyUsages::KeyCertSign}
-                KeyUsage::CRlSign => {target_ku |= KeyUsages::CRLSign}
-                KeyUsage::EncipherOnly => {target_ku |= KeyUsages::EncipherOnly}
-                KeyUsage::DecipherOnly => {target_ku |= KeyUsages::DecipherOnly}
+                KeyUsage::DigitalSignature => target_ku |= KeyUsages::DigitalSignature,
+                KeyUsage::ContentCommitment => target_ku |= KeyUsages::NonRepudiation,
+                KeyUsage::KeyEncipherment => target_ku |= KeyUsages::KeyEncipherment,
+                KeyUsage::DataEncipherment => target_ku |= KeyUsages::DataEncipherment,
+                KeyUsage::KeyAgreement => target_ku |= KeyUsages::KeyAgreement,
+                KeyUsage::KeyCertSign => target_ku |= KeyUsages::KeyCertSign,
+                KeyUsage::CRlSign => target_ku |= KeyUsages::CRLSign,
+                KeyUsage::EncipherOnly => target_ku |= KeyUsages::EncipherOnly,
+                KeyUsage::DecipherOnly => target_ku |= KeyUsages::DecipherOnly,
             }
         }
         set_target_key_usage(&mut cps, target_ku.bits());
-        // return TestcaseResult::skip(tc, "key_usage not supported yet");
     }
 
     if tc.extended_key_usage.len() > 0 {
@@ -163,23 +282,48 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
         set_extended_key_usage(&mut cps, ekus);
     }
 
+    set_extended_key_usage_path(&mut cps, true);
+
     set_enforce_trust_anchor_constraints(&mut cps, true);
 
-    let cert = if let Ok(cert) = Certificate::from_pem(tc.peer_certificate.as_bytes()) {
-        cert
-    } else {
-        return TestcaseResult::fail(tc, "unable to parse cert");
+    let time_of_interest = match tc.validation_time {
+        Some(toi) => toi.timestamp() as u64,
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
     };
-    let mut leaf = PDVCertificate::try_from(cert).unwrap();
+    set_time_of_interest(&mut cps, time_of_interest);
 
-    let mut cpr = CertificationPathResults::new();
     let mut pe = PkiEnvironment::new();
     populate_5280_pki_environment(&mut pe);
 
+    // flag to indicate a TA or CA used by this test case features an unsupported name constraint
     let mut has_an_ip_constraint = false;
+
+    // treat unsupported peer names as an unsupported constraint (this may cause a few success cases to be skipped)
+    for pn in &tc.expected_peer_names {
+        if pn.kind == PeerKind::Ip {
+            has_an_ip_constraint = true;
+        }
+    }
+    if let Some(pn) = &tc.expected_peer_name {
+        if pn.kind == PeerKind::Ip {
+            has_an_ip_constraint = true;
+        }
+    }
+
+    // Prepare a TA store using TAs from the testcase
     let mut ta_store = TaSource::new();
-    for ta in tc.trusted_certs.iter() {
+    for (ii, ta) in tc.trusted_certs.iter().enumerate() {
         let cert_ta = Certificate::from_pem(ta.as_bytes()).expect("Read pem file");
+        #[cfg(debug_assertions)]
+        {
+            let p = Path::new("./target");
+            let f = p.join(Path::new(&format!("ta_{ii}.der")));
+            let _ = fs::write(f, &cert_ta.to_der().unwrap());
+        }
+
         if has_unsupported_name_constraint(&cert_ta) {
             has_an_ip_constraint = true;
             //return TestcaseResult::skip(tc, "unsupported name constraint");
@@ -192,18 +336,18 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     ta_store.initialize().unwrap();
     pe.add_trust_anchor_source(Box::new(ta_store.clone()));
 
-    let time_of_interest = match tc.validation_time {
-        Some(toi) => toi.timestamp() as u64,
-        None => SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-    };
-    set_time_of_interest(&mut cps, time_of_interest);
-
+    // Prepare a certificate store using certificates from the testcase
     let mut cert_store = CertSource::new();
-    for ca in tc.untrusted_intermediates.iter() {
+    for (ii, ca) in tc.untrusted_intermediates.iter().enumerate() {
         let cert_ca = Certificate::from_pem(ca.as_bytes()).expect("Read pem file");
+
+        #[cfg(debug_assertions)]
+        {
+            let p = Path::new("./target");
+            let f = p.join(Path::new(&format!("ca_{ii}.der")));
+            let _ = fs::write(f, &cert_ca.to_der().unwrap());
+        }
+
         if has_unsupported_name_constraint(&cert_ca) {
             has_an_ip_constraint = true;
             //return TestcaseResult::skip(tc, "unsupported name constraint");
@@ -214,50 +358,105 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
         });
     }
     cert_store.initialize(&cps).unwrap();
+
+    // invoke the path builder to prepare a graph with all partial paths in the given infrastructure and add the source to environment
     cert_store.find_all_partial_paths(&pe, &cps);
-
-    //let validation_time = webpki::types::UnixTime::since_unix_epoch(
-    //    (tc.validation_time.unwrap_or(Utc::now().into()) - DateTime::UNIX_EPOCH)
-    //        .to_std()
-    //        .expect("invalid validation time!"),
-    //);
-
-    let mut paths: Vec<CertificationPath> = vec![];
     pe.add_certificate_source(Box::new(cert_store.clone()));
-    let r = pe
-        .get_paths_for_target(&pe, &leaf, &mut paths, 0, time_of_interest)
+
+    // Parse the target certificate from the Testcase
+    let cert = if let Ok(cert) = Certificate::from_pem(tc.peer_certificate.as_bytes()) {
+        cert
+    } else {
+        return TestcaseResult::fail(tc, "unable to parse target cert");
+    };
+    let leaf = PDVCertificate::try_from(cert).unwrap();
+
+    #[cfg(debug_assertions)]
+    {
+        let p = Path::new("./target");
+        let f = p.join(Path::new(&format!("target.der")));
+        let _ = fs::write(f, &leaf.encoded_cert);
+    }
+
+    // find all paths in the graph built above
+    let mut paths: Vec<CertificationPath> = vec![];
+    pe.get_paths_for_target(&pe, &leaf, &mut paths, 0, time_of_interest)
         .unwrap();
 
-    let mut v = vec![];
-    let mut failures = vec![];
+    let mut observed_status_values = vec![];
+    let mut observed_errors = vec![];
+
+    // loop over paths looking for one that validates
     for path in &mut paths {
+        // TA constraints are a modification of user supplied constraints per RFC 5937
         let mod_cps = enforce_trust_anchor_constraints(&mut cps, &path.trust_anchor).unwrap();
 
-        let r = match pe.validate_path(&pe, &mod_cps, path, &mut cpr) {
+        let mut cpr = CertificationPathResults::new();
+        match pe.validate_path(&pe, &mod_cps, path, &mut cpr) {
             Ok(()) => match get_validation_status(&cpr) {
                 Some(status) => {
                     if certval::PathValidationStatus::Valid == status {
-
-                        if tc.expected_result == ExpectedResult::Failure && (tc.expected_peer_name.is_some() || !tc.expected_peer_names.is_empty()) {
-                            //todo this may over skip
-                            return TestcaseResult::skip(tc, "peer name evaluation after successful path validation is not supported");
+                        if tc.expected_result == ExpectedResult::Failure
+                            && (tc.expected_peer_name.is_some()
+                                || !tc.expected_peer_names.is_empty())
+                        {
+                            // Some test cases should fail due to name checking that would normally be performed by an application.
+                            // Approximate that here.
+                            if !tc.expected_peer_names.is_empty() || tc.expected_peer_name.is_some()
+                            {
+                                if let Some(init_perm) =
+                                    convert_peer_names_to_name_constraints_settings(tc)
+                                {
+                                    let mut bufs = BTreeMap::new();
+                                    let ncs = name_constraints_settings_to_name_constraints_set(
+                                        &init_perm, &mut bufs,
+                                    )
+                                    .unwrap();
+                                    if let Ok(Some(PDVExtension::SubjectAltName(san))) =
+                                        path.target.get_extension(&ID_CE_SUBJECT_ALT_NAME)
+                                    {
+                                        if !ncs.san_within_permitted_subtrees(&Some(san)) {
+                                            return TestcaseResult::fail(
+                                                tc,
+                                                "peer name check failed",
+                                            );
+                                        }
+                                        if has_unsupported_san(san) {
+                                            return TestcaseResult::skip(
+                                                tc,
+                                                "unsupported SubjectAltName in leaf",
+                                            );
+                                        }
+                                    } else {
+                                        return TestcaseResult::fail(
+                                            tc,
+                                            "peer name check failed because SAN was absent",
+                                        );
+                                    }
+                                }
+                            }
                         }
 
+                        // Some tests should fail due to IP address constraint processing. Since IP
+                        // address constraints are not supported, return skip for those.
                         if tc.expected_result == ExpectedResult::Failure && has_an_ip_constraint {
                             return TestcaseResult::skip(tc, "unsupported name constraint");
                         }
 
                         return TestcaseResult::success(tc);
                     } else {
+
+                        // Some tests should succeed due to IP address constraint processing. Since IP
+                        // address constraints are not supported, return skip for those.
                         if tc.expected_result == ExpectedResult::Success && has_an_ip_constraint {
                             return TestcaseResult::skip(tc, "unsupported name constraint");
                         }
 
-                        v.push(status);
+                        observed_status_values.push(status);
                     }
                 }
                 None => {
-                    return TestcaseResult::fail(tc, "no status value returned");
+                    panic!();
                 }
             },
             Err(e) => {
@@ -265,68 +464,9 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
                     return TestcaseResult::skip(tc, "unsupported name constraint");
                 }
 
-                failures.push(format!("validate_path failed with {e:?}"));
+                observed_errors.push(format!("validate_path failed with {e:?}"));
             }
         };
     }
-    TestcaseResult::fail(tc, &format!("{:?}: {:?}", v, failures))
-
-    //let Ok(trust_anchors) = trust_anchor_ders
-    //    .iter()
-    //    .map(|ta| webpki::anchor_from_trusted_cert(ta.into()))
-    //    .collect::<Result<Vec<_>, _>>()
-    //else {
-    //    return TestcaseResult::fail(tc, "trusted certs: trust anchor extraction failed");
-    //};
-
-    //let validation_time = webpki::types::UnixTime::since_unix_epoch(
-    //    (tc.validation_time.unwrap_or(Utc::now().into()) - DateTime::UNIX_EPOCH)
-    //        .to_std()
-    //        .expect("invalid validation time!"),
-    //);
-
-    //let sig_algs = &[
-    //    ring::ECDSA_P256_SHA256,
-    //    ring::ECDSA_P384_SHA384,
-    //    ring::RSA_PKCS1_2048_8192_SHA256,
-    //    ring::RSA_PKCS1_2048_8192_SHA384,
-    //    ring::RSA_PKCS1_2048_8192_SHA512,
-    //    ring::RSA_PSS_2048_8192_SHA256_LEGACY_KEY,
-    //    ring::RSA_PSS_2048_8192_SHA384_LEGACY_KEY,
-    //    ring::RSA_PSS_2048_8192_SHA512_LEGACY_KEY,
-    //];
-
-    //if let Err(e) = leaf.verify_for_usage(
-    //    sig_algs,
-    //    &trust_anchors,
-    //    &intermediates[..],
-    //    validation_time,
-    //    webpki::KeyUsage::server_auth(),
-    //    None,
-    //    None,
-    //) {
-    //    return TestcaseResult::fail(tc, &e.to_string());
-    //}
-
-    //let subject_name = match &tc.expected_peer_name {
-    //    None => return TestcaseResult::skip(tc, "implementation requires peer names"),
-    //    Some(pn) => match pn.kind {
-    //        PeerKind::Dns => webpki::types::ServerName::DnsName(
-    //            webpki::types::DnsName::try_from(pn.value.as_str())
-    //                .expect(&format!("invalid expected DNS name: {}", &pn.value)),
-    //        ),
-    //        PeerKind::Ip => {
-    //            let addr = pn.value.as_str().try_into().unwrap();
-    //            webpki::types::ServerName::IpAddress(addr)
-    //        }
-    //        _ => return TestcaseResult::skip(tc, "implementation requires DNS or IP peer names"),
-    //    },
-    //};
-
-    //if let Err(_) = leaf.verify_is_valid_for_subject_name(&subject_name) {
-    //    TestcaseResult::fail(tc, "subject name validation failed")
-    //} else {
-    //    TestcaseResult::success(tc)
-    //}
-    //TestcaseResult::fail(tc, "wip")
+    TestcaseResult::fail(tc, &format!("{:?}: {:?}", observed_status_values, observed_errors))
 }
