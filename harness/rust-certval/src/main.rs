@@ -172,8 +172,8 @@ fn main() {
     }
     println!("Found {unexpected} test cases where expected results were not produced.");
     println!("Ran {} test cases.", results.len());
-    println!("- {successful} succeeded as expected, {failed} failed as expected, and {skipped} were skipped due to missing support.");
-    println!("- {failed} failed as expected, and {skipped} were skipped due to missing support.");
+    println!("- {successful} succeeded as expected.");
+    println!("- {failed} failed as expected.");
     println!("- {skipped} were skipped due to missing support.");
     println!("- {} were skipped as linter checks.", LINTER_TESTS.len());
     println!(
