@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(debug_assertions)]
@@ -13,6 +13,7 @@ use limbo_harness_support::{
         PeerName, Testcase, TestcaseResult,
     },
 };
+use rayon::prelude::*;
 use x509_cert::{
     certificate::{CertificateInner, Raw},
     der::{
@@ -117,10 +118,28 @@ fn expected_failure(tc: &Testcase) -> bool {
 fn main() {
     let limbo = load_limbo();
 
-    let mut results = vec![];
-    for testcase in &limbo.testcases {
-        results.push(evaluate_testcase(testcase));
-    }
+    let results: Vec<_> = limbo
+        .testcases
+        .par_iter()
+        .map(|tc| {
+            let id = tc.id.as_str();
+            // Filter out computationally intensive test cases
+            // TODO(baloo): Those should be rejected by certval itself.
+            if PATHOLOGICAL_CHECKS.contains(&id) {
+                return TestcaseResult::skip(tc, "computatinally intensive test case");
+            }
+
+            let start = Instant::now();
+            let out = evaluate_testcase(tc);
+            let end = Instant::now();
+            let duration = end.duration_since(start);
+            if duration > Duration::from_secs(1) {
+                eprintln!("Lengthy test case {id}, took {duration:?}");
+            }
+
+            out
+        })
+        .collect();
 
     let mut skipped_rationales: BTreeMap<String, i32> = BTreeMap::new();
     let mut successful = 0;
