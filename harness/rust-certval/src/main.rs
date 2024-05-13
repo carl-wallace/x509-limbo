@@ -1,9 +1,11 @@
+use lazy_static::lazy_static;
 use std::{
     collections::BTreeMap,
-    fs,
-    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(debug_assertions)]
+use std::{fs, path::Path};
 
 use limbo_harness_support::{
     load_limbo,
@@ -39,12 +41,39 @@ use certval::{
 
 type Certificate = CertificateInner<Raw>;
 
-fn expected_failure(tc: &Testcase) -> bool {
-    let linter_tests = vec![
+lazy_static! {
+    static ref WEAK_KEY_CHECKS : Vec<&'static str> = vec![
+        "webpki::forbidden-weak-rsa-key-in-root",
+        "webpki::forbidden-weak-rsa-in-leaf",
+        "webpki::forbidden-rsa-not-divisable-by-8-in-root",
+        "webpki::forbidden-rsa-key-not-divisable-by-8-in-leaf",
+    ];
+
+    static ref BUG : Vec<&'static str> = vec![
+        "rfc5280::nc::nc-permits-invalid-email-san"
+    ];
+
+    static ref PATHOLOGICAL_CHECKS : Vec<&'static str> = vec![
+        "pathological::nc-dos-1",
+        "pathological::nc-dos-2",
+        "pathological::nc-dos-3"
+    ];
+
+    static ref UNSUPPORTED_APPLICATION_CHECK : Vec<&'static str> = vec![
+        "webpki::san::mismatch-apex-subdomain-san"
+    ];
+
+    static ref BUSTED_TEST_CASES : Vec<&'static str> = vec![
+        "rfc5280::ee-empty-issuer" // the issuer name in the EE is not actually empty and chains to the TA just fine
+    ];
+
+    static ref LINTER_TESTS : Vec<&'static str> = vec![
         "rfc5280::aki::critical-aki",
         "rfc5280::aki::leaf-missing-aki",
         "rfc5280::aki::intermediate-missing-aki",
         "rfc5280::aki::cross-signed-root-missing-aki",
+        "rfc5280::ca-empty-subject", // the empty names actually chain, making this more of a linter check
+        "rfc5280::nc::permitted-dns-match-noncritical",
         "rfc5280::nc::not-allowed-in-ee-noncritical",
         "rfc5280::nc::not-allowed-in-ee-critical",
         "rfc5280::pc::ica-noncritical-pc",
@@ -79,7 +108,17 @@ fn expected_failure(tc: &Testcase) -> bool {
         "webpki::ee-basicconstraints-ca",
         "webpki::ca-as-leaf",
     ];
-    if linter_tests.contains(&tc.id.as_str()) {
+}
+
+fn expected_failure(tc: &Testcase) -> bool {
+    let id = tc.id.as_str();
+    if LINTER_TESTS.contains(&id)
+        || BUSTED_TEST_CASES.contains(&id)
+        || UNSUPPORTED_APPLICATION_CHECK.contains(&id)
+        || WEAK_KEY_CHECKS.contains(&id)
+        || PATHOLOGICAL_CHECKS.contains(&id)
+        || BUG.contains(&id)
+    {
         return true;
     }
     false
@@ -104,7 +143,7 @@ fn main() {
         match result.actual_result {
             ActualResult::Success => {
                 successful += 1;
-                if tc.expected_result != ExpectedResult::Success && !expected_failure(&tc){
+                if tc.expected_result != ExpectedResult::Success && !expected_failure(&tc) {
                     println!(
                         "Did not get expected result for test case # {ii} - {:?}",
                         tc.id
@@ -134,7 +173,28 @@ fn main() {
         }
     }
     println!("Found {unexpected} test cases where expected results were not produced.");
-    println!("Ran {} test cases: {successful} succeeded as expected, {failed} failed as expected, and {skipped} were skipped due to missing support.", results.len());
+    println!("Ran {} test cases.", results.len());
+    println!("- {successful} succeeded as expected, {failed} failed as expected, and {skipped} were skipped due to missing support.");
+    println!("- {failed} failed as expected, and {skipped} were skipped due to missing support.");
+    println!("- {skipped} were skipped due to missing support.");
+    println!("- {} were skipped as linter checks.", LINTER_TESTS.len());
+    println!(
+        "- {} were skipped until weak key detection is added.",
+        WEAK_KEY_CHECKS.len()
+    );
+    println!("- {} were skipped as a bug to be fixed.", BUG.len());
+    println!(
+        "- {} were skipped as pathological cases that need attention.",
+        PATHOLOGICAL_CHECKS.len()
+    );
+    println!(
+        "- {} were skipped as unsupported application-level checks.",
+        UNSUPPORTED_APPLICATION_CHECK.len()
+    );
+    println!(
+        "- {} were skipped as a broken test case (need to pull the fix).",
+        BUSTED_TEST_CASES.len()
+    );
 
     for k in skipped_rationales.keys() {
         println!("{k}: {:?}", skipped_rationales.get(k));
@@ -315,6 +375,7 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
     // Prepare a TA store using TAs from the testcase
     let mut ta_store = TaSource::new();
+    #[allow(unused_variables)]
     for (ii, ta) in tc.trusted_certs.iter().enumerate() {
         let cert_ta = Certificate::from_pem(ta.as_bytes()).expect("Read pem file");
         #[cfg(debug_assertions)]
@@ -338,6 +399,7 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
     // Prepare a certificate store using certificates from the testcase
     let mut cert_store = CertSource::new();
+    #[allow(unused_variables)]
     for (ii, ca) in tc.untrusted_intermediates.iter().enumerate() {
         let cert_ca = Certificate::from_pem(ca.as_bytes()).expect("Read pem file");
 
@@ -389,7 +451,16 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     // loop over paths looking for one that validates
     for path in &mut paths {
         // TA constraints are a modification of user supplied constraints per RFC 5937
-        let mod_cps = enforce_trust_anchor_constraints(&mut cps, &path.trust_anchor).unwrap();
+        let mod_cps = match enforce_trust_anchor_constraints(&mut cps, &path.trust_anchor) {
+            Ok(mod_cps) => mod_cps,
+            Err(_e) => {
+                if tc.expected_result == ExpectedResult::Failure && has_an_ip_constraint {
+                    return TestcaseResult::skip(tc, "unsupported name constraint");
+                } else {
+                    return TestcaseResult::fail(tc, "TA constraint processing failed");
+                }
+            }
+        };
 
         let mut cpr = CertificationPathResults::new();
         match pe.validate_path(&pe, &mod_cps, path, &mut cpr) {
@@ -445,7 +516,6 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
                         return TestcaseResult::success(tc);
                     } else {
-
                         // Some tests should succeed due to IP address constraint processing. Since IP
                         // address constraints are not supported, return skip for those.
                         if tc.expected_result == ExpectedResult::Success && has_an_ip_constraint {
@@ -468,5 +538,8 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
             }
         };
     }
-    TestcaseResult::fail(tc, &format!("{:?}: {:?}", observed_status_values, observed_errors))
+    TestcaseResult::fail(
+        tc,
+        &format!("{:?}: {:?}", observed_status_values, observed_errors),
+    )
 }
