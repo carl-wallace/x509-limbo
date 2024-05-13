@@ -1,4 +1,3 @@
-use lazy_static::lazy_static;
 use std::{
     collections::BTreeMap,
     time::{SystemTime, UNIX_EPOCH},
@@ -38,74 +37,68 @@ use certval::{
 
 type Certificate = CertificateInner<Raw>;
 
-lazy_static! {
-    static ref WEAK_KEY_CHECKS : Vec<&'static str> = vec![
-        "webpki::forbidden-weak-rsa-key-in-root",
-        "webpki::forbidden-weak-rsa-in-leaf",
-        "webpki::forbidden-rsa-not-divisable-by-8-in-root",
-        "webpki::forbidden-rsa-key-not-divisable-by-8-in-leaf",
-    ];
+const WEAK_KEY_CHECKS: &[&str] = &[
+    "webpki::forbidden-weak-rsa-key-in-root",
+    "webpki::forbidden-weak-rsa-in-leaf",
+    "webpki::forbidden-rsa-not-divisable-by-8-in-root",
+    "webpki::forbidden-rsa-key-not-divisable-by-8-in-leaf",
+];
 
-    static ref BUG : Vec<&'static str> = vec![
-        "rfc5280::nc::nc-permits-invalid-email-san"
-    ];
+const BUG: &[&str] = &["rfc5280::nc::nc-permits-invalid-email-san"];
 
-    static ref PATHOLOGICAL_CHECKS : Vec<&'static str> = vec![
-        "pathological::nc-dos-1",
-        "pathological::nc-dos-2",
-        "pathological::nc-dos-3"
-    ];
+const PATHOLOGICAL_CHECKS: &[&str] = &[
+    "pathological::nc-dos-1",
+    "pathological::nc-dos-2",
+    "pathological::nc-dos-3",
+];
 
-    static ref UNSUPPORTED_APPLICATION_CHECK : Vec<&'static str> = vec![
-        "webpki::san::mismatch-apex-subdomain-san"
-    ];
+const UNSUPPORTED_APPLICATION_CHECK: &[&str] = &["webpki::san::mismatch-apex-subdomain-san"];
 
-    static ref BUSTED_TEST_CASES : Vec<&'static str> = vec![
-        "rfc5280::ee-empty-issuer" // the issuer name in the EE is not actually empty and chains to the TA just fine
-    ];
+const BUSTED_TEST_CASES: &[&str] = &[
+    "rfc5280::ee-empty-issuer", // the issuer name in the EE is not actually empty and chains to the TA just fine
+];
 
-    static ref LINTER_TESTS : Vec<&'static str> = vec![
-        "rfc5280::aki::critical-aki",
-        "rfc5280::aki::leaf-missing-aki",
-        "rfc5280::aki::intermediate-missing-aki",
-        "rfc5280::aki::cross-signed-root-missing-aki",
-        "rfc5280::ca-empty-subject", // the empty names actually chain, making this more of a linter check
-        "rfc5280::nc::permitted-dns-match-noncritical",
-        "rfc5280::nc::not-allowed-in-ee-noncritical",
-        "rfc5280::nc::not-allowed-in-ee-critical",
-        "rfc5280::pc::ica-noncritical-pc",
-        "rfc5280::san::noncritical-with-empty-subject",
-        "rfc5280::serial::too-long",
-        "rfc5280::serial::zero",
-        "rfc5280::ski::critical-ski",
-        "rfc5280::ski::root-missing-ski",
-        "rfc5280::ski::intermediate-missing-ski",
-        "rfc5280::root-missing-basic-constraints",
-        "rfc5280::root-non-critical-basic-constraints",
-        "rfc5280::root-inconsistent-ca-extensions",
-        "rfc5280::leaf-ku-keycertsign",
-        "rfc5280::duplicate-extensions",
-        "webpki::aki::root-with-aki-missing-keyidentifier",
-        "webpki::aki::root-with-aki-authoritycertissuer",
-        "webpki::aki::root-with-aki-authoritycertserialnumber",
-        "webpki::aki::root-with-aki-all-fields",
-        "webpki::aki::root-with-aki-ski-mismatch",
-        "webpki::eku::ee-anyeku",
-        "webpki::eku::ee-critical-eku",
-        "webpki::eku::ee-without-eku",
-        "webpki::eku::root-has-eku",
-        "webpki::nc::intermediate-permitted-excluded-subtrees-both-null",
-        "webpki::nc::intermediate-permitted-excluded-subtrees-both-empty-sequences",
-        "webpki::san::no-san",
-        "webpki::san::san-critical-with-nonempty-subject",
-        "webpki::malformed-aia",
-        "webpki::forbidden-p192-leaf",
-        "webpki::forbidden-dsa-leaf",
-        "webpki::v1-cert",
-        "webpki::ee-basicconstraints-ca",
-        "webpki::ca-as-leaf",
-    ];
-}
+const LINTER_TESTS: &[&str] = &[
+    "rfc5280::aki::critical-aki",
+    "rfc5280::aki::leaf-missing-aki",
+    "rfc5280::aki::intermediate-missing-aki",
+    "rfc5280::aki::cross-signed-root-missing-aki",
+    "rfc5280::ca-empty-subject", // the empty names actually chain, making this more of a linter check
+    "rfc5280::nc::permitted-dns-match-noncritical",
+    "rfc5280::nc::not-allowed-in-ee-noncritical",
+    "rfc5280::nc::not-allowed-in-ee-critical",
+    "rfc5280::pc::ica-noncritical-pc",
+    "rfc5280::san::noncritical-with-empty-subject",
+    "rfc5280::serial::too-long",
+    "rfc5280::serial::zero",
+    "rfc5280::ski::critical-ski",
+    "rfc5280::ski::root-missing-ski",
+    "rfc5280::ski::intermediate-missing-ski",
+    "rfc5280::root-missing-basic-constraints",
+    "rfc5280::root-non-critical-basic-constraints",
+    "rfc5280::root-inconsistent-ca-extensions",
+    "rfc5280::leaf-ku-keycertsign",
+    "rfc5280::duplicate-extensions",
+    "webpki::aki::root-with-aki-missing-keyidentifier",
+    "webpki::aki::root-with-aki-authoritycertissuer",
+    "webpki::aki::root-with-aki-authoritycertserialnumber",
+    "webpki::aki::root-with-aki-all-fields",
+    "webpki::aki::root-with-aki-ski-mismatch",
+    "webpki::eku::ee-anyeku",
+    "webpki::eku::ee-critical-eku",
+    "webpki::eku::ee-without-eku",
+    "webpki::eku::root-has-eku",
+    "webpki::nc::intermediate-permitted-excluded-subtrees-both-null",
+    "webpki::nc::intermediate-permitted-excluded-subtrees-both-empty-sequences",
+    "webpki::san::no-san",
+    "webpki::san::san-critical-with-nonempty-subject",
+    "webpki::malformed-aia",
+    "webpki::forbidden-p192-leaf",
+    "webpki::forbidden-dsa-leaf",
+    "webpki::v1-cert",
+    "webpki::ee-basicconstraints-ca",
+    "webpki::ca-as-leaf",
+];
 
 fn expected_failure(tc: &Testcase) -> bool {
     let id = tc.id.as_str();
