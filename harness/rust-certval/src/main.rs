@@ -32,8 +32,7 @@ use x509_cert::{
 use certval::{
     enforce_trust_anchor_constraints, get_validation_status,
     name_constraints_settings_to_name_constraints_set, populate_5280_pki_environment,
-    set_enforce_trust_anchor_constraints, set_extended_key_usage, set_extended_key_usage_path,
-    set_initial_path_length_constraint, set_target_key_usage, set_time_of_interest, CertFile,
+    CertFile,
     CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings,
     ExtensionProcessing, NameConstraintsSettings, PDVCertificate, PDVExtension, PkiEnvironment,
     TaSource,
@@ -305,7 +304,7 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
     if tc.features.contains(&Feature::MaxChainDepth) {
         let d = tc.max_chain_depth.unwrap() as u8;
-        set_initial_path_length_constraint(&mut cps, d);
+        cps.set_initial_path_length_constraint(d);
     }
 
     if !tc.key_usage.is_empty() {
@@ -323,7 +322,7 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
                 KeyUsage::DecipherOnly => target_ku |= KeyUsages::DecipherOnly,
             }
         }
-        set_target_key_usage(&mut cps, target_ku.bits());
+        cps.set_target_key_usage(target_ku.bits());
     }
 
     if tc.extended_key_usage.len() > 0 {
@@ -339,12 +338,12 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
                 KnownEkUs::AnyExtendedKeyUsage => ekus.push(ANY_EXTENDED_KEY_USAGE.to_string()),
             }
         }
-        set_extended_key_usage(&mut cps, ekus);
+        cps.set_extended_key_usage(ekus);
     }
 
-    set_extended_key_usage_path(&mut cps, true);
+    cps.set_extended_key_usage_path(true);
 
-    set_enforce_trust_anchor_constraints(&mut cps, true);
+    cps.set_enforce_trust_anchor_constraints(true);
 
     let time_of_interest = match tc.validation_time {
         Some(toi) => toi.timestamp() as u64,
@@ -353,7 +352,7 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
             .unwrap()
             .as_secs(),
     };
-    set_time_of_interest(&mut cps, time_of_interest);
+    cps.set_time_of_interest(time_of_interest);
 
     let mut pe = PkiEnvironment::new();
     populate_5280_pki_environment(&mut pe);
