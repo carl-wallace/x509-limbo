@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "testcases": [
+       {
+      "id": "rfc5280::nc::nc-forbids-othername",
+      "conflicts_with": [],
+      "features": [],
+      "importance": "undetermined",
+      "description": "Produces the following **invalid** graph:\n\n```\nroot -> ICA (forbid: ON) -> EE (SAN: ON)\n```\n\nRFC 5280 does not specify the handling other OtherName constraints,\nbut does specify that implementations must either process (and\ntherefore recognize) all constraints or outright reject the certificate.\n\n> If a name constraints extension that is marked as critical\n> imposes constraints on a particular name form, and an instance of\n> that name form appears in the subject field or subjectAltName\n> extension of a subsequent certificate, then the application MUST\n> either process the constraint or reject the certificate.\n\nThis testcase contains an ICA with a private OtherName (meaning the\nimplementation will not recognize it), and therefore must reject the chain.",
+      "validation_kind": "SERVER",
+      "trusted_certs": [
+        "-----BEGIN CERTIFICATE-----\nMIIBjzCCATWgAwIBAgIUCFbIyFSqbXN/PTLifAxrSrVMAaQwCgYIKoZIzj0EAwIw\nGjEYMBYGA1UEAwwPeDUwOS1saW1iby1yb290MCAXDTcwMDEwMTAwMDAwMVoYDzI5\nNjkwNTAzMDAwMDAxWjAaMRgwFgYDVQQDDA94NTA5LWxpbWJvLXJvb3QwWTATBgcq\nhkjOPQIBBggqhkjOPQMBBwNCAAQK0GwSQPWm2N1ggTTr7TlJ4YlCzVwL5npZeduF\nuaj1hnlbhuWjAXaalBwGG17EUq2ABzcoD/U8HOQjrmYwL5Q3o1cwVTAPBgNVHRMB\nAf8EBTADAQH/MAsGA1UdDwQEAwICBDAWBgNVHREEDzANggtleGFtcGxlLmNvbTAd\nBgNVHQ4EFgQUYfuXXmbojJLregOWLV2l5jkoucAwCgYIKoZIzj0EAwIDSAAwRQIh\nAN0gXIT0Bnno4wtV+tsU2USB+fQwpObwWYdp7xHZPinoAiBGLAexxa9EbONWJdkC\n2uuoDEvbrSlxgVkiz9bOoy6IVQ==\n-----END CERTIFICATE-----\n"
+      ],
+      "untrusted_intermediates": [
+        "-----BEGIN CERTIFICATE-----\nMIICIDCCAcWgAwIBAgIUGlVMKzAvijXVZCLtelgFhqI4u/8wCgYIKoZIzj0EAwIw\nGjEYMBYGA1UEAwwPeDUwOS1saW1iby1yb290MCAXDTcwMDEwMTAwMDAwMVoYDzI5\nNjkwNTAzMDAwMDAxWjBpMTgwNgYDVQQLDC80NzYwNzI4MDg3OTg2NDE0ODA2NjIw\nNzE2MjQ2MDQzMjg2NDg2NDY1MjQ5MzIyMDEtMCsGA1UEAwwkeDUwOS1saW1iby1p\nbnRlcm1lZGlhdGUtcGF0aGxlbi1Ob25lMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcD\nQgAENv+TKmUrlMv2MSnAVqPYGsQChH5nAcmgSrS+ZmeBbuAEBut+TIi/6N4uGo+Y\nXy8WyJUO/u114BOLnyDBHdxG46OBlzCBlDAPBgNVHRMBAf8EBTADAQH/MAsGA1Ud\nDwQEAwICBDAfBgNVHSMEGDAWgBRh+5deZuiMkut6A5YtXaXmOSi5wDAdBgNVHQ4E\nFgQUwdSQE1sd5obA98Dnj90gHcAv0qIwNAYDVR0eAQH/BCowKKAPMA2CC2V4YW1w\nbGUuY29toRUwE6ARBgsrBgEEAYOzOoUaA6ACBQAwCgYIKoZIzj0EAwIDSQAwRgIh\nAIybsUwkKCTATAEF1ticBXgt3/9kzy3Q6iSAf2gJKLmAAiEAgpRAK5y4p9upurTY\n8EMQxqcu5My3z9NaM1v5pi25fz4=\n-----END CERTIFICATE-----\n"
+      ],
+      "peer_certificate": "-----BEGIN CERTIFICATE-----\nMIICFTCCAbqgAwIBAgIUUcBtyYizf6pNefLXi9t84wV6DqswCgYIKoZIzj0EAwIw\naTE4MDYGA1UECwwvNDc2MDcyODA4Nzk4NjQxNDgwNjYyMDcxNjI0NjA0MzI4NjQ4\nNjQ2NTI0OTMyMjAxLTArBgNVBAMMJHg1MDktbGltYm8taW50ZXJtZWRpYXRlLXBh\ndGhsZW4tTm9uZTAgFw03MDAxMDEwMDAwMDFaGA8yOTY5MDUwMzAwMDAwMVowFjEU\nMBIGA1UEAwwLZXhhbXBsZS5jb20wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQ5\nXu+jtNK10fomFm6G1dZ67TO7/hV7AICdquOe1NfgGmYhGJF4u1aDO3gi0j3Anzje\nbMPq0SdC/Y1p0G5arInZo4GQMIGNMB0GA1UdDgQWBBRZUWysvJKwl9SnC0/XwPgL\nH55GPTAfBgNVHSMEGDAWgBTB1JATWx3mhsD3wOeP3SAdwC/SojALBgNVHQ8EBAMC\nB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwKQYDVR0RBCIwIIILZXhhbXBsZS5jb22g\nEQYLKwYBBAGDszqFGgOgAgUAMAoGCCqGSM49BAMCA0kAMEYCIQD7pTnY48ZqCz36\nzCB1ujaw05Ptr9FortaT6GMMvl2knQIhAIrn311VFaPs2x+wMWDEok+7DdwHNErw\nfBRoNV5Kh/wJ\n-----END CERTIFICATE-----\n",
+      "peer_certificate_key": "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEILFn5U6ZWSCpKBxmoi8byJQFpYREUWFWdxIP+BpE7DM4oAoGCCqGSM49\nAwEHoUQDQgAEOV7vo7TStdH6JhZuhtXWeu0zu/4VewCAnarjntTX4BpmIRiReLtW\ngzt4ItI9wJ843mzD6tEnQv2NadBuWqyJ2Q==\n-----END EC PRIVATE KEY-----\n",
+      "validation_time": null,
+      "signature_algorithms": [],
+      "key_usage": [],
+      "extended_key_usage": [],
+      "expected_result": "FAILURE",
+      "expected_peer_name": {
+        "kind": "DNS",
+        "value": "example.com"
+      },
+      "expected_peer_names": [],
+      "max_chain_depth": null
+    }
+  ]
+}

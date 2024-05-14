@@ -8,6 +8,8 @@ limbo-harness-support = { path = "../../harness-support/rust" }
 chrono = "0.4.38"
 pem = "3.0.4"
 serde_json = "1.0.116"
-certval = { git = "https://github.com/baloo/rust-pki.git", branch = "baloo/x509-limbo" }
+#certval = { git = "https://github.com/baloo/rust-pki.git", branch = "baloo/x509-limbo" }
+certval = { git = "https://github.com/carl-wallace/rust-pki.git", branch = "ip" }
 x509-cert = { version = "0.3.0-pre", features = ["hazmat"] }
 rayon = "1.10.0"
+cidr = "0.2.2"
