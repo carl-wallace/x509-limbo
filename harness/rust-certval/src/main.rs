@@ -17,7 +17,7 @@ use limbo_harness_support::{
 };
 use rayon::prelude::*;
 use x509_cert::{
-    certificate::{CertificateInner, Raw},
+    certificate::{Certificate},
     der::{
         flagset::FlagSet,
         oid::db::rfc5280::{
@@ -30,14 +30,14 @@ use x509_cert::{
 };
 
 use certval::{
-    enforce_trust_anchor_constraints, get_validation_status,
-    name_constraints_settings_to_name_constraints_set, populate_5280_pki_environment, CertFile,
+    enforce_trust_anchor_constraints,
+    name_constraints_settings_to_name_constraints_set, CertFile,
     CertSource, CertVector, CertificationPath, CertificationPathResults, CertificationPathSettings,
     ExtensionProcessing, NameConstraintsSettings, PDVCertificate, PDVExtension, PkiEnvironment,
     TaSource,
 };
 
-type Certificate = CertificateInner<Raw>;
+// type Certificate = CertificateInner<Raw>;
 
 const WEAK_KEY_CHECKS: &[&str] = &[
     "webpki::forbidden-weak-rsa-key-in-root",
@@ -379,7 +379,7 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
     cps.set_time_of_interest(time_of_interest);
 
     let mut pe = PkiEnvironment::new();
-    populate_5280_pki_environment(&mut pe);
+    pe.populate_5280_pki_environment();
 
     // Prepare a TA store using TAs from the testcase
     let mut ta_store = TaSource::new();
@@ -460,12 +460,12 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
 
         let mut cpr = CertificationPathResults::new();
         match pe.validate_path(&pe, &mod_cps, path, &mut cpr) {
-            Ok(()) => match get_validation_status(&cpr) {
+            Ok(()) => match cpr.get_validation_status() {
                 Some(status) => {
                     if certval::PathValidationStatus::Valid == status {
                         if tc.expected_result == ExpectedResult::Failure
                             && (tc.expected_peer_name.is_some()
-                                || !tc.expected_peer_names.is_empty())
+                            || !tc.expected_peer_names.is_empty())
                         {
                             // Some test cases should fail due to name checking that would normally be performed by an application.
                             // Approximate that here.
@@ -478,7 +478,7 @@ fn evaluate_testcase(tc: &Testcase) -> TestcaseResult {
                                     let ncs = name_constraints_settings_to_name_constraints_set(
                                         &init_perm, &mut bufs,
                                     )
-                                    .unwrap();
+                                        .unwrap();
                                     if let Ok(Some(PDVExtension::SubjectAltName(san))) =
                                         path.target.get_extension(&ID_CE_SUBJECT_ALT_NAME)
                                     {
